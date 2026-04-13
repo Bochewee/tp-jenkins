@@ -1,38 +1,17 @@
 /**
  * Jenkinsfile – Pipeline CI complète
  * Projet : Boutique en ligne – ICDE848
- *
- * Ce fichier doit être placé à la RACINE du dépôt Git.
- * Jenkins le détecte automatiquement lors de la création du job Pipeline.
- *
- * Stages :
- *   1. Checkout       → récupère le code depuis Git
- *   2. Build          → compile le code source
- *   3. Tests unitaires → lance *Test.java via Surefire
- *   4. Tests intégration → lance *IT.java via Failsafe
- *   5. Couverture     → génère le rapport JaCoCo
- *   6. Qualité        → Checkstyle + PMD + CPD + SpotBugs
- *   7. Archive        → sauvegarde le JAR dans Jenkins
- *
- * Post :
- *   - failure → email à l'équipe
- *   - fixed   → email quand le build repasse au vert
  */
 
 pipeline {
 
-    // Exécuter sur n'importe quel agent disponible
     agent any
 
-    // Outils configurés dans Global Tool Configuration
     tools {
-        maven 'Maven3'    // Nom exact défini dans Jenkins
-        jdk   'JDK21'     // Nom exact défini dans Jenkins
+        maven 'Maven3'
+        jdk   'JDK21'
     }
 
-    // ─────────────────────────────────────────────────
-    // PARAMÈTRES (optionnel – pour TP4)
-    // ─────────────────────────────────────────────────
     parameters {
         string(
             name:         'BRANCH',
@@ -51,9 +30,6 @@ pipeline {
         )
     }
 
-    // ─────────────────────────────────────────────────
-    // STAGES
-    // ─────────────────────────────────────────────────
     stages {
 
         // ── Stage 1 : Récupérer le code ──────────────
@@ -69,14 +45,12 @@ pipeline {
         stage('Build') {
             steps {
                 bat 'mvn clean compile -B'
-                // -B = batch mode (pas de couleurs, logs Jenkins-friendly)
             }
         }
 
         // ── Stage 3 : Tests unitaires ─────────────────
         stage('Tests unitaires') {
             when {
-                // Sauter si le paramètre SKIP_TESTS est activé
                 not { expression { return params.SKIP_TESTS } }
             }
             steps {
@@ -84,7 +58,6 @@ pipeline {
             }
             post {
                 always {
-                    // Publier les résultats dans Jenkins (graphique de tendance)
                     junit '**/target/surefire-reports/*.xml'
                 }
                 failure {
@@ -128,8 +101,8 @@ pipeline {
         // ── Stage 6 : Analyse qualité ─────────────────
         stage('Qualité') {
             steps {
-                    bat 'mvn checkstyle:checkstyle pmd:pmd pmd:cpd spotbugs:spotbugs -B'
-                }
+                bat 'mvn checkstyle:checkstyle pmd:pmd pmd:cpd spotbugs:spotbugs -B'
+            }
             post {
                 always {
                     recordIssues(
@@ -140,7 +113,6 @@ pipeline {
                             cpd(pattern:        '**/cpd.xml'),
                             spotBugs(pattern:   '**/spotbugsXml.xml')
                         ],
-                        // Rendre le build UNSTABLE si > 10 avertissements
                         qualityGates: [[
                             threshold: 10,
                             type: 'TOTAL',
@@ -163,9 +135,43 @@ pipeline {
             }
         }
 
-        // ── Stage 8 : Validation manuelle avant PROD ──
-        // (Décommenter pour TP4 – Input step)
-        /*
+        // ── Stage 8 : TP4 Partie B — Stages parallèles ──
+        stage('Validation parallèle') {
+            parallel {
+                stage('Tests unitaires parallèle') {
+                    steps {
+                        bat 'mvn test -B'
+                    }
+                    post {
+                        always {
+                            junit '**/target/surefire-reports/*.xml'
+                        }
+                    }
+                }
+                stage('Analyse qualité parallèle') {
+                    steps {
+                        bat 'mvn checkstyle:checkstyle pmd:pmd -B'
+                    }
+                }
+            }
+        }
+
+        // ── Stage 9 : TP4 Partie C — Job paramétré ───
+        stage('Checkout commit spécifique') {
+            steps {
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "${params.BRANCH}"]],
+                    userRemoteConfigs: [[
+                        url: 'https://github.com/Bochewee/tp-jenkins.git',
+                        credentialsId: 'github-credentials'
+                    ]]
+                ])
+                bat 'git log -1 --oneline'
+            }
+        }
+
+        // ── Stage 10 : TP4 Partie D — Validation manuelle avant PROD ──
         stage('Validation PROD') {
             when { expression { return params.ENVIRONMENT == 'prod' } }
             steps {
@@ -173,36 +179,27 @@ pipeline {
                     input(
                         message:   "Déployer en PRODUCTION ?",
                         ok:        "Oui, déployer",
-                        submitter: "admin,tech-lead"
+                        submitter: "admin"
                     )
                 }
             }
         }
-        */
 
-        // ── Stage 9 : Déploiement ─────────────────────
-        // (Décommenter et adapter à votre contexte)
-        /*
-        stage('Deploy') {
+        // ── Stage 11 : TP4 Partie A — Job chaîné ─────
+        stage('Trigger Qualite') {
             steps {
-                sh "./deploy.sh ${params.ENVIRONMENT}"
+                build job: 'tp-boutique-qualite', wait: false
             }
         }
-        */
 
     } // fin stages
 
-    // ─────────────────────────────────────────────────
-    // POST — Actions après tous les stages
-    // ─────────────────────────────────────────────────
     post {
 
-        // Toujours exécuté (succès ou échec)
         always {
             echo "Pipeline terminée — statut : ${currentBuild.currentResult}"
         }
 
-        // Seulement en cas d'échec
         failure {
             emailext(
                 subject: "❌ FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
@@ -221,12 +218,11 @@ Consulter les logs : ${env.BUILD_URL}console
             )
         }
 
-        // Seulement quand le build repasse de FAILURE à SUCCESS
         fixed {
             emailext(
                 subject: "✅ FIXED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
                 body:    "Le build est de nouveau stable : ${env.BUILD_URL}",
-                to:      'equipe-dev@monentreprise.fr'
+                to:      'florian.huguet78@orange.fr'
             )
         }
 
