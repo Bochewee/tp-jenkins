@@ -216,7 +216,7 @@ URL     : ${env.BUILD_URL}
 
 Consulter les logs : ${env.BUILD_URL}console
                 """,
-                to:          'equipe-dev@monentreprise.fr',
+                to:          'florian.huguet78@orange.fr',
                 attachLog:   true
             )
         }
