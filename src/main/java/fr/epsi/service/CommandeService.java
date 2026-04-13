@@ -1,4 +1,4 @@
-﻿package fr.epsi.service;
+package fr.epsi.service;
 
 import fr.epsi.model.Article;
 import fr.epsi.model.Panier;
